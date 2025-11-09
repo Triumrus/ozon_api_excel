@@ -1,0 +1,26 @@
+let
+    Источник = let
+    url = "https://api-seller.ozon.ru/v3/product/list",
+    headers = [
+        #"Client-Id" = "ВАШ_ID",
+        #"Api-Key" = "ВАШ_API_KEY",
+        #"Content-Type" = "application/json"
+    ],
+    body = "{""filter"": {""visibility"":""ALL""}, ""limit"": 1000}",
+    source = Json.Document(
+        Web.Contents(
+            url,
+            [
+                Headers = headers,
+                Content = Text.ToBinary(body)
+            ]
+        )
+    ),
+    items = source[result][items],
+    table = Table.FromList(items, Splitter.SplitByNothing(), null, null, ExtraValues.Error),
+    expanded = Table.ExpandRecordColumn(table, "Column1", {"product_id", "offer_id"}, {"ID", "Артикул"})
+in
+    expanded,
+    #"Добавленный запрос" = Table.Combine({Источник, #"Артикула_товаров_архивов"})
+in
+    #"Добавленный запрос"

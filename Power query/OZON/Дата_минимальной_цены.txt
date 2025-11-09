@@ -1,0 +1,53 @@
+let
+    // 1. Получаем список SKU из таблицы
+    skuTable = Характеристики_товаров,
+    // #"Строки с примененным фильтром" = Table.SelectRows(skuTable, each ([flag_actual_sku] = "actual")),  // Ваш запрос с таблицей товаров
+    skuList = Table.Column(skuTable, "id"),  // Извлекаем столбец "id" (обратите внимание на регистр)
+    
+    // 2. Фильтруем пустые значения и преобразуем в строки
+    filteredSkus = List.Select(skuList, each _ <> null and _ <> ""),
+    skuStrings = List.Transform(filteredSkus, each Text.From(_)),  // Число → строка
+    
+    // 3. Формируем тело запроса с массивом строк
+    url = "https://api-seller.ozon.ru/v1/product/action/timer/status",
+    
+    headers = [
+        #"Client-Id" = "ВАШ_ID",
+        #"Api-Key" = "ВАШ_API_KEY",
+        #"Content-Type" = "application/json"
+    ],
+    body = Text.Format(
+        "{""product_ids"": [#{0}]}",
+        {
+            Text.Combine(
+                List.Transform(skuStrings, each """" & _ & """"),
+                ","
+            )
+        }
+    ),
+    
+    // 4. Отправляем запрос
+    source = Json.Document(
+        Web.Contents(
+            url,
+            [
+                Headers = headers,
+                Content = Text.ToBinary(body)
+            ]
+        )
+    ),
+    #"Преобразовано в таблицу" = Record.ToTable(source),
+    #"Развернутый элемент Value" = Table.ExpandListColumn(#"Преобразовано в таблицу", "Value"),
+    #"Развернутый элемент Value1" = Table.ExpandRecordColumn(#"Развернутый элемент Value", "Value", {"product_id", "min_price_for_auto_actions_enabled", "expired_at"}, {"product_id", "min_price_for_auto_actions_enabled", "expired_at"}),
+    #"Сегодняшняя дата" = Table.AddColumn(#"Развернутый элемент Value1", "date_now", each DateTime.LocalNow()),
+    #"Вставлена проанализированная дата" = Table.AddColumn(#"Сегодняшняя дата", "Выполнить анализ", each Date.From(DateTimeZone.From([expired_at])), type date),
+    #"Удаленные столбцы" = Table.RemoveColumns(#"Вставлена проанализированная дата",{"expired_at"}),
+    #"Переупорядоченные столбцы" = Table.ReorderColumns(#"Удаленные столбцы",{"Name", "product_id", "min_price_for_auto_actions_enabled", "Выполнить анализ", "date_now"}),
+    #"Переименованные столбцы" = Table.RenameColumns(#"Переупорядоченные столбцы",{{"Выполнить анализ", "expired_at"}}),
+    #"Вставлено: дата" = Table.AddColumn(#"Переименованные столбцы", "Дата", each DateTime.Date([date_now]), type date),
+    #"Удаленные столбцы1" = Table.RemoveColumns(#"Вставлено: дата",{"date_now"}),
+    #"Переименованные столбцы1" = Table.RenameColumns(#"Удаленные столбцы1",{{"Дата", "date_now"}}),
+    #"Вычитание вставленных дат" = Table.AddColumn(#"Переименованные столбцы1", "Вычитание", each Duration.Days([expired_at] - [date_now]), Int64.Type),
+    #"Переименованные столбцы2" = Table.RenameColumns(#"Вычитание вставленных дат",{{"Вычитание", "Осталось дней"}})
+in
+    #"Переименованные столбцы2"

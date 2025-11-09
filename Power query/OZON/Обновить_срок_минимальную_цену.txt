@@ -1,0 +1,62 @@
+let
+    // 1. Получаем список SKU из таблицы
+    skuTable = Характеристики_товаров,
+    // #"Строки с примененным фильтром" = Table.SelectRows(skuTable, each ([flag_actual_sku] = "actual")),  // Ваш запрос с таблицей товаров
+    skuList = Table.Column(skuTable, "id"),  // Извлекаем столбец "id" (обратите внимание на регистр)
+    
+    // 2. Фильтруем пустые значения и преобразуем в строки
+    filteredSkus = List.Select(skuList, each _ <> null and _ <> ""),
+    skuStrings = List.Transform(filteredSkus, each Text.From(_)),  // Число → строка
+    
+    // 3. Формируем тело запроса с массивом строк
+    url = "https://api-seller.ozon.ru/v1/product/action/timer/update",
+    
+    headers = [
+        #"Client-Id" = "ВАШ_ID",
+        #"Api-Key" = "ВАШ_API_KEY",
+        #"Content-Type" = "application/json"
+    ],
+    body = Text.Format(
+        "{""product_ids"": [#{0}]}",
+        {
+            Text.Combine(
+                List.Transform(skuStrings, each """" & _ & """"),
+                ","
+            )
+        }
+    ),
+    
+
+    // 4. Отправляем запрос
+    source = Json.Document(
+        Web.Contents(
+            url,
+            [
+                Headers = headers,
+                Content = Text.ToBinary(body)
+            ]
+        )
+    ),
+    
+  // 4. Отправляем запрос и получаем метаданные
+    response = Web.Contents(
+        url,
+        [
+            Headers = headers,
+            Content = Text.ToBinary(body)
+        ]
+    ),
+    
+    // 5. Получаем статус ответа
+    statusCode = Value.Metadata(response)[Response.Status],
+    contentLength = Binary.Length(response),
+    
+    // 6. Обрабатываем ответ в зависимости от статуса
+    result = if statusCode = 200 then
+                 "Well done! Таймеры успешно обновлены."
+             else
+                 "Ошибка! Status: " & Text.From(statusCode) & ", Response: " & 
+                 (if contentLength > 0 then Text.FromBinary(response) else "Пустой ответ")
+    
+in
+    result

@@ -1,0 +1,78 @@
+let
+
+    url = "https://api-seller.ozon.ru/v1/product/import/prices",   
+    headers = [
+        #"Client-Id" = "ВАШ_ID",
+        #"Api-Key" = "ВАШ_API_KEY",
+        #"Content-Type" = "application/json"
+    ],
+
+    // 1. Подготовка данных для отправки
+    Источник = Excel.CurrentWorkbook(){[Name="Обновление_цен"]}[Content],
+    #"Строки с примененным фильтром1" = Table.SelectRows(Источник, each ([Активный] = "ACTUAL")),
+    Округлено = Table.TransformColumns(#"Строки с примененным фильтром1",{{"Себестоимость", each Number.Round(_, 0), type number}}), // Таблица с ценами из Excel
+    ПреобразованныеДанные = Table.TransformColumnTypes(Округлено,{{"Себестоимость", type text}}),
+    Округлено1 = Table.TransformColumns(ПреобразованныеДанные,{{"Минимальная цена", each Number.Round(_, 0), type number}}),
+    #"Измененный тип" = Table.TransformColumnTypes(Округлено1,{{"Минимальная цена", type text}}),
+    Округлено2 = Table.TransformColumns(#"Измененный тип",{{"Наша цена", each Number.Round(_, 0), type number}}),
+    #"Измененный тип1" = Table.TransformColumnTypes(Округлено2,{{"Наша цена", type text}}),
+    Округлено3 = Table.TransformColumns(#"Измененный тип1",{{"Цена до скидки", each Number.Round(_, 0), type number}}),
+    #"Измененный тип2" = Table.TransformColumnTypes(Округлено3,{{"Цена до скидки", type text}, {"Участвуем в акции", type text}}),
+    #"Переименованные столбцы" = Table.RenameColumns(#"Измененный тип2",{{"Артикул", "offer_id"}}),
+    #"Строки с примененным фильтром" = Table.SelectRows(#"Переименованные столбцы", each ([offer_id] = "SET_NX292" or [offer_id] = "SET_NX297" or [offer_id] = "SET_NX292A")),
+
+
+    // 2. Отключаем Акции , что бы выставить все цены.
+    ТелоЗапроса_отк_акци = Text.Combine(
+        List.Transform(
+            Table.ToRecords(#"Строки с примененным фильтром"),
+            each Text.Format(
+                "{""offer_id"": ""#{0}"", ""auto_action_enabled"": ""DISABLED"",""auto_add_to_ozon_actions_list_enabled"": ""DISABLED""}",
+                {_[offer_id]}
+            )
+        ),
+        ","
+    ),
+    ПолноеТело_откл_акци = "{""prices"": [" & ТелоЗапроса_отк_акци & "]}",
+
+    Результат_отключений_акции = Json.Document(
+        Web.Contents(
+            url,
+            [
+                Headers = headers,
+                Content = Text.ToBinary(ПолноеТело_откл_акци)
+            ]
+        )
+    ),
+
+    // 3.  Выставляем цены и включаем акции
+    ТелоЗапроса = Text.Combine(
+        List.Transform(
+            Table.ToRecords(#"Строки с примененным фильтром"),
+            each Text.Format(
+                "{""offer_id"": ""#{0}"", ""net_price"": ""#{1}"",""min_price"":""#{2}"",""price"":""#{3}"",""old_price"":""#{4}"",""auto_action_enabled"":""#{5}"",""auto_add_to_ozon_actions_list_enabled"":""#{5}"",""min_price_for_auto_actions_enabled"":true}",
+                {_[offer_id], _[Себестоимость],_[Минимальная цена],_[Наша цена],[Цена до скидки],[Участвуем в акции]}
+            )
+        ),
+        ","
+    ),
+    ПолноеТело = "{""prices"": [" & ТелоЗапроса & "]}",
+
+    Результат = Json.Document(
+        Web.Contents(
+            url,
+            [
+                Headers = headers,
+                Content = Text.ToBinary(ПолноеТело)
+            ]
+        )
+    ),
+
+    // 4. Получаем ответ
+    #"Преобразовано в таблицу" = Record.ToTable(Результат),
+    #"Развернутый элемент Value" = Table.ExpandListColumn(#"Преобразовано в таблицу", "Value"),
+    #"Развернутый элемент Value2" = Table.ExpandRecordColumn(#"Развернутый элемент Value", "Value", {"product_id", "offer_id", "updated", "errors"}, {"product_id", "offer_id", "updated", "errors"}),
+    #"Развернутый элемент errors" = Table.ExpandListColumn(#"Развернутый элемент Value2", "errors"),
+    #"Развернутый элемент errors1" = Table.ExpandRecordColumn(#"Развернутый элемент errors", "errors", {"code", "message"}, {"code", "message"})
+in
+    #"Развернутый элемент errors1"

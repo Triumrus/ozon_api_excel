@@ -1,0 +1,35 @@
+let
+    Источник = let
+    url = "https://api-seller.ozon.ru/v4/product/info/attributes",
+    
+    headers = [
+        #"Client-Id" = "ВАШ_ID",
+        #"Api-Key" = "ВАШ_API_KEY",
+        #"Content-Type" = "application/json"
+    ],
+    body = "{""filter"": {}, ""limit"": 1000,""sku"":""sku""}",
+    source = Json.Document(
+        Web.Contents(
+            url,
+            [
+                Headers = headers,
+                Content = Text.ToBinary(body)
+            ]
+        )
+    ),
+    items = source[result],
+    table = Table.FromList(items, Splitter.SplitByNothing(), null, null, ExtraValues.Error),
+    expanded=table
+    // expanded = Table.ExpandRecordColumn(table, "Column1", {"product_id", "offer_id"}, {"ID", "Артикул"})
+in
+    expanded,
+    #"Развернутый элемент Column1" = Table.ExpandRecordColumn(Источник, "Column1", {"id", "barcode", "name", "offer_id", "height", "depth", "width", "dimension_unit", "weight", "weight_unit", "description_category_id", "type_id", "primary_image", "model_info", "images", "pdf_list", "attributes", "complex_attributes", "color_image", "sku", "barcodes"}, {"id", "barcode", "name", "offer_id", "height", "depth", "width", "dimension_unit", "weight", "weight_unit", "description_category_id", "type_id", "primary_image", "model_info", "images", "pdf_list", "attributes", "complex_attributes", "color_image", "sku", "barcodes"}),
+    #"Развернутый элемент model_info" = Table.ExpandRecordColumn(#"Развернутый элемент Column1", "model_info", {"model_id", "count"}, {"model_id", "count"}),
+    #"Удаленные столбцы" = Table.RemoveColumns(#"Развернутый элемент model_info",{"images", "pdf_list", "barcodes"}),
+    #"Флаг актуальных SKU" = Table.AddColumn(#"Удаленные столбцы", "Пользовательский", each "actual"),
+    #"Добавленный запрос" = Table.Combine({#"Флаг актуальных SKU", #"Характеристики_товаров_архив"}),
+    #"Добавлен пользовательский объект" = Table.AddColumn(#"Добавленный запрос", "Пользовательский.1", each if [Пользовательский] = "actual" then "actual" else "archiev"),
+    #"Переименованные столбцы" = Table.RenameColumns(#"Добавлен пользовательский объект",{{"Пользовательский.1", "flag_actual_sku"}}),
+    #"Удаленные столбцы1" = Table.RemoveColumns(#"Переименованные столбцы",{"Пользовательский"})
+in
+    #"Удаленные столбцы1"

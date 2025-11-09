@@ -1,0 +1,77 @@
+let  
+    // 1. Получаем список SKU из таблицы
+    skuTable = Характеристики_товаров,  // Ваш запрос с таблицей товаров
+    skuList = Table.Column(skuTable, "id"),  // Извлекаем столбец "id" (обратите внимание на регистр)
+    
+    // 2. Фильтруем пустые значения и преобразуем в строки
+    filteredSkus = List.Select(skuList, each _ <> null and _ <> ""),
+    skuStrings = List.Transform(filteredSkus, each Text.From(_)),  // Число → строка
+    
+    // 3. Формируем тело запроса с массивом строк
+    url = "https://api-seller.ozon.ru/v5/product/info/prices",
+    
+    headers = [
+        #"Client-Id" = "ВАШ_ID",
+        #"Api-Key" = "ВАШ_API_KEY",
+        #"Content-Type" = "application/json"
+    ],
+    body = Text.Format(
+        "{""cursor"": """",""filter"": {""product_id"": [#{0}],""visibility"": ""ALL""},""limit"": 1000}",
+        {
+            Text.Combine(
+                List.Transform(skuStrings, each """" & _ & """"),
+                ","
+            )
+        }
+    ),
+    
+    // 4. Отправляем запрос
+    source = Json.Document(
+        Web.Contents(
+            url,
+            [
+                Headers = headers,
+                Content = Text.ToBinary(body)
+            ]
+        )
+    ),
+    items = source[items],
+    table = Table.FromList(items, Splitter.SplitByNothing(), null, null, ExtraValues.Error),
+    #"Развернутый элемент Column1" = Table.ExpandRecordColumn(table, "Column1", {"acquiring", "offer_id", "product_id", "volume_weight", "commissions", "marketing_actions", "price", "price_indexes"}, {"acquiring", "offer_id", "product_id", "volume_weight", "commissions", "marketing_actions", "price", "price_indexes"}),
+    #"Развернутый элемент commissions" = Table.ExpandRecordColumn(#"Развернутый элемент Column1", "commissions", {"fbo_deliv_to_customer_amount", "fbo_direct_flow_trans_max_amount", "fbo_direct_flow_trans_min_amount", "fbo_return_flow_amount", "fbs_deliv_to_customer_amount", "fbs_direct_flow_trans_min_amount", "fbs_direct_flow_trans_max_amount", "fbs_first_mile_max_amount", "fbs_first_mile_min_amount", "fbs_return_flow_amount", "sales_percent_fbo", "sales_percent_fbs"}, {"fbo_deliv_to_customer_amount", "fbo_direct_flow_trans_max_amount", "fbo_direct_flow_trans_min_amount", "fbo_return_flow_amount", "fbs_deliv_to_customer_amount", "fbs_direct_flow_trans_min_amount", "fbs_direct_flow_trans_max_amount", "fbs_first_mile_max_amount", "fbs_first_mile_min_amount", "fbs_return_flow_amount", "sales_percent_fbo", "sales_percent_fbs"}),
+    #"Развернутый элемент marketing_actions" = Table.ExpandRecordColumn(#"Развернутый элемент commissions", "marketing_actions", {"current_period_from", "current_period_to", "actions", "ozon_actions_exist"}, {"current_period_from", "current_period_to", "actions", "ozon_actions_exist"}),
+    #"Развернутый элемент price" = Table.ExpandRecordColumn(#"Развернутый элемент marketing_actions", "price", {"auto_action_enabled", "currency_code", "marketing_price", "marketing_seller_price", "min_price", "old_price", "price", "retail_price", "vat", "auto_add_to_ozon_actions_list_enabled", "net_price"}, {"auto_action_enabled", "currency_code", "marketing_price", "marketing_seller_price", "min_price", "old_price", "price.1", "retail_price", "vat", "auto_add_to_ozon_actions_list_enabled", "net_price"}),
+    #"Развернутый элемент price_indexes" = Table.ExpandRecordColumn(#"Развернутый элемент price", "price_indexes", {"external_index_data", "ozon_index_data", "color_index", "self_marketplaces_index_data"}, {"external_index_data", "ozon_index_data", "color_index", "self_marketplaces_index_data"}),
+    #"Развернутый элемент external_index_data" = Table.ExpandRecordColumn(#"Развернутый элемент price_indexes", "external_index_data", {"min_price", "min_price_currency", "price_index_value"}, {"external_index_data.min_price", "external_index_data.min_price_currency", "external_index_data.price_index_value"}),
+    #"Развернутый элемент ozon_index_data" = Table.ExpandRecordColumn(#"Развернутый элемент external_index_data", "ozon_index_data", {"min_price", "min_price_currency", "price_index_value"}, {"ozon_index_data.min_price", "ozon_index_data.min_price_currency", "ozon_index_data.price_index_value"}),
+    #"Развернутый элемент self_marketplaces_index_data" = Table.ExpandRecordColumn(#"Развернутый элемент ozon_index_data", "self_marketplaces_index_data", {"min_price", "min_price_currency", "price_index_value"}, {"self_marketplaces_index_data.min_price", "self_marketplaces_index_data.min_price_currency", "self_marketplaces_index_data.price_index_value"}),
+    #"Удаленные столбцы" = Table.RemoveColumns(#"Развернутый элемент self_marketplaces_index_data",{"actions"}),
+    reward_ozon = Table.AddColumn(#"Удаленные столбцы", "reward_ozon", each ([sales_percent_fbo]/100)*[price.1]),
+    cost_of_fbo_min = Table.AddColumn(reward_ozon, "cost_of_fbo_min", each [reward_ozon]+[acquiring]+[fbo_direct_flow_trans_min_amount]+[fbo_deliv_to_customer_amount]),
+    cost_of_fbo_max = Table.AddColumn(cost_of_fbo_min, "cost_of_fbo_max", each [reward_ozon]+[acquiring]+[fbo_direct_flow_trans_max_amount]+[fbo_deliv_to_customer_amount]),
+    margin_max = Table.AddColumn(cost_of_fbo_max, "margin_max", each [price.1]-[net_price]-[cost_of_fbo_min]),
+    margin_min = Table.AddColumn(margin_max, "margin_min", each [price.1]-[net_price]-[cost_of_fbo_max]),
+    marginality_min = Table.AddColumn(margin_min, "marginality_min", each ([margin_min]/[price.1])*100),
+    marginality_max = Table.AddColumn(marginality_min, "marginality_max", each ([margin_max]/[price.1])*100),
+    cost_of_fbo_mean = Table.AddColumn(marginality_max, "cost_of_fbo_mean", each ([cost_of_fbo_min]+[cost_of_fbo_max])/2),
+    #"Переупорядоченные столбцы" = Table.ReorderColumns(cost_of_fbo_mean,{"acquiring", "offer_id", "product_id", "volume_weight", "fbo_deliv_to_customer_amount", "fbo_direct_flow_trans_max_amount", "fbo_direct_flow_trans_min_amount", "fbo_return_flow_amount", "fbs_deliv_to_customer_amount", "fbs_direct_flow_trans_min_amount", "fbs_direct_flow_trans_max_amount", "fbs_first_mile_max_amount", "fbs_first_mile_min_amount", "fbs_return_flow_amount", "sales_percent_fbo", "sales_percent_fbs", "current_period_from", "current_period_to", "ozon_actions_exist", "auto_action_enabled", "currency_code", "marketing_price", "marketing_seller_price", "min_price", "old_price", "price.1", "retail_price", "vat", "auto_add_to_ozon_actions_list_enabled", "net_price", "external_index_data.min_price", "external_index_data.min_price_currency", "external_index_data.price_index_value", "ozon_index_data.min_price", "ozon_index_data.min_price_currency", "ozon_index_data.price_index_value", "color_index", "self_marketplaces_index_data.min_price", "self_marketplaces_index_data.min_price_currency", "self_marketplaces_index_data.price_index_value", "reward_ozon", "cost_of_fbo_min", "cost_of_fbo_max", "cost_of_fbo_mean", "margin_max", "margin_min", "marginality_min", "marginality_max"}),
+    coef_for_min_price = Table.AddColumn(#"Переупорядоченные столбцы", "coef_for_min_price", each 1-([cost_of_fbo_mean]/[price.1]+0.06+0.1)),
+    min_price_set = Table.AddColumn(coef_for_min_price, "min_price_set", each [net_price]/[coef_for_min_price]),
+    coef_for_price_stock = Table.AddColumn(min_price_set, "coef_for_price_stock", each 1-([cost_of_fbo_mean]/[price.1]+0.06+0.25)),
+    #"Добавлен пользовательский объект" = Table.AddColumn(coef_for_price_stock, "price_set_stock", each [net_price]/[coef_for_price_stock]),
+    #"Переупорядоченные столбцы1" = Table.ReorderColumns(#"Добавлен пользовательский объект",{"offer_id", "acquiring", "product_id", "volume_weight", "fbo_deliv_to_customer_amount", "fbo_direct_flow_trans_max_amount", "fbo_direct_flow_trans_min_amount", "fbo_return_flow_amount", "fbs_deliv_to_customer_amount", "fbs_direct_flow_trans_min_amount", "fbs_direct_flow_trans_max_amount", "fbs_first_mile_max_amount", "fbs_first_mile_min_amount", "fbs_return_flow_amount", "sales_percent_fbo", "sales_percent_fbs", "current_period_from", "current_period_to", "ozon_actions_exist", "auto_action_enabled", "currency_code", "marketing_price", "marketing_seller_price", "min_price", "old_price", "price.1", "retail_price", "vat", "auto_add_to_ozon_actions_list_enabled", "net_price", "external_index_data.min_price", "external_index_data.min_price_currency", "external_index_data.price_index_value", "ozon_index_data.min_price", "ozon_index_data.min_price_currency", "ozon_index_data.price_index_value", "color_index", "self_marketplaces_index_data.min_price", "self_marketplaces_index_data.min_price_currency", "self_marketplaces_index_data.price_index_value", "reward_ozon", "cost_of_fbo_min", "cost_of_fbo_max", "cost_of_fbo_mean", "margin_max", "margin_min", "marginality_min", "marginality_max", "coef_for_min_price", "min_price_set", "coef_for_price_stock", "price_set_stock"}),
+    Округлено = Table.TransformColumns(#"Переупорядоченные столбцы1",{{"marginality_min", each Number.Round(_, 2), type number}}),
+    Округлено1 = Table.TransformColumns(Округлено,{{"marginality_max", each Number.Round(_, 2), type number}}),
+    Округлено2 = Table.TransformColumns(Округлено1,{{"coef_for_min_price", each Number.Round(_, 3), type number}}),
+    Округлено3 = Table.TransformColumns(Округлено2,{{"min_price_set", each Number.Round(_, 2), type number}}),
+    #"Измененный тип" = Table.TransformColumnTypes(Округлено3,{{"min_price_set", Currency.Type}}),
+    Округлено4 = Table.TransformColumns(#"Измененный тип",{{"coef_for_price_stock", each Number.Round(_, 3), type number}}),
+    Округлено5 = Table.TransformColumns(Округлено4,{{"price_set_stock", each Number.Round(_, 2), type number}}),
+    #"Измененный тип1" = Table.TransformColumnTypes(Округлено5,{{"price_set_stock", Currency.Type}})
+in
+    #"Измененный тип1"
+    // items
+    // #"Извлеченные значения"
+    // #"Развернутый элемент Column1" = Table.ExpandRecordColumn(Источник, "Column1", {"sku", "name", "offer_id", "warehouse_id", "warehouse_name", "cluster_id", "cluster_name", "item_tags", "ads", "days_without_sales", "turnover_grade", "idc", "available_stock_count", "valid_stock_count", "waiting_docs_stock_count", "expiring_stock_count", "transit_defect_stock_count", "stock_defect_stock_count", "excess_stock_count", "other_stock_count", "requested_stock_count", "transit_stock_count", "return_from_customer_stock_count", "return_to_seller_stock_count"}, {"Column1.sku", "Column1.name", "Column1.offer_id", "Column1.warehouse_id", "Column1.warehouse_name", "Column1.cluster_id", "Column1.cluster_name", "Column1.item_tags", "Column1.ads", "Column1.days_without_sales", "Column1.turnover_grade", "Column1.idc", "Column1.available_stock_count", "Column1.valid_stock_count", "Column1.waiting_docs_stock_count", "Column1.expiring_stock_count", "Column1.transit_defect_stock_count", "Column1.stock_defect_stock_count", "Column1.excess_stock_count", "Column1.other_stock_count", "Column1.requested_stock_count", "Column1.transit_stock_count", "Column1.return_from_customer_stock_count", "Column1.return_to_seller_stock_count"})
+// in
+    // #"Развернутый элемент Column1"

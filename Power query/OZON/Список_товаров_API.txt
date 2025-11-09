@@ -1,0 +1,7 @@
+let
+    Источник = Table.NestedJoin(#"Артикула_товаров", {"ID"}, Характеристики_товаров, {"id"}, "Характеристики товаров", JoinKind.FullOuter),
+    #"Развернутый элемент Характеристики товаров1" = Table.ExpandTableColumn(Источник, "Характеристики товаров", {"id", "barcode", "name", "offer_id", "height", "depth", "width", "dimension_unit", "weight", "weight_unit", "description_category_id", "type_id", "primary_image", "model_id", "count", "attributes", "complex_attributes", "color_image", "sku", "flag_actual_sku"}, {"id.1", "barcode", "name", "offer_id", "height", "depth", "width", "dimension_unit", "weight", "weight_unit", "description_category_id", "type_id", "primary_image", "model_id", "count", "attributes", "complex_attributes", "color_image", "sku", "flag_actual_sku"}),
+    #"Удаленные столбцы" = Table.RemoveColumns(#"Развернутый элемент Характеристики товаров1",{"id.1", "attributes", "complex_attributes"}),
+    #"Переупорядоченные столбцы" = Table.ReorderColumns(#"Удаленные столбцы",{"Артикул", "ID", "sku", "barcode", "name", "offer_id", "height", "depth", "width", "dimension_unit", "weight", "weight_unit", "description_category_id", "type_id", "primary_image", "model_id", "count", "color_image"})
+in
+    #"Переупорядоченные столбцы"

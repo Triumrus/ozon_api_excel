@@ -1,0 +1,85 @@
+let
+    // 1. Получаем список SKU из таблицы характеристик товаров
+    skuTable = Характеристики_товаров,
+    БуферизованныеSKU = Table.Buffer(skuTable),
+    
+    // Проверяем наличие столбца 'sku'
+    skuList = if Table.HasColumns(БуферизованныеSKU, "sku") then
+                Table.Column(БуферизованныеSKU, "sku")
+              else
+                error "В таблице отсутствует столбец 'sku'",
+    
+    // 2. Устанавливаем период отчетности (последние 30 дней)
+    ТекущаяДата = DateTime.Date(DateTime.LocalNow()),
+    ДатаНачала = Date.AddDays(ТекущаяДата, -1),
+    
+    // 3. Формируем параметры запроса к API Ozon
+    url = "https://api-seller.ozon.ru/v1/analytics/data",
+    headers = [
+        #"Client-Id" = "ВАШ_ID",
+        #"Api-Key" = "ВАШ_API_KEY",
+        #"Content-Type" = "application/json"
+    ],
+    
+    // 4. Формируем тело запроса с разбивкой по дням
+    body = "{""date_from"": """ & Date.ToText(ДатаНачала, "yyyy-MM-dd") & 
+           """, ""date_to"": """ & Date.ToText(ТекущаяДата, "yyyy-MM-dd") & 
+           """, ""metrics"": [
+            ""ordered_units"", ""revenue"",
+           ""hits_view_search"",""hits_view_pdp"",
+           ""hits_view"",""hits_tocart"",
+            ""session_view"",""conv_tocart"",
+            ""returns"",""cancellations"",
+            ""delivered_units"",""position_category"",
+            ""hits_tocart_search"",""hits_tocart_pdp""
+           ], ""dimension"": [""sku"", ""day""], ""limit"": 1000}",
+
+    // 5. Отправляем запрос
+    source = Json.Document(
+        Web.Contents(
+            url,
+            [
+                Headers = headers,
+                Content = Text.ToBinary(body),
+                ManualStatusHandling = {400, 403, 404, 500}
+            ]
+        )
+    ),
+    
+    // 6. Обрабатываем ответ API
+    data = source[result][data],
+    
+    // 7. Создаем таблицу продаж с разбивкой по дням
+    ТаблицаПродаж = Table.FromRecords(data),
+    #"Извлеченные значения" = Table.TransformColumns(ТаблицаПродаж, {"metrics", each Text.Combine(List.Transform(_, Text.From), ";"), type text}),
+    #"Разделить столбец по разделителю" = Table.SplitColumn(#"Извлеченные значения", "metrics", Splitter.SplitTextByDelimiter(";", QuoteStyle.Csv), {"metrics.1", "metrics.2","metrics.3", "metrics.4","metrics.5", "metrics.6","metrics.7", "metrics.8","metrics.9", "metrics.10","metrics.11", "metrics.12","metrics.13", "metrics.14"}),
+    #"Измененный тип" = Table.TransformColumnTypes(#"Разделить столбец по разделителю",{{"metrics.1", Int64.Type}, {"metrics.2", Int64.Type}}),
+    #"Развернутый элемент dimensions" = Table.ExpandListColumn(#"Измененный тип", "dimensions"),
+    #"Развернутый элемент dimensions1" = Table.ExpandRecordColumn(#"Развернутый элемент dimensions", "dimensions", {"id", "name"}, {"dimensions.id", "dimensions.name"})
+
+
+    ,Source = #"Развернутый элемент dimensions1",
+    // Добавляем индекс строк
+    WithIndex = Table.AddIndexColumn(Source, "Index", 0, 1),
+    
+    // Создаем два столбца - для четных и нечетных строк
+    AddColumns = Table.AddColumn(WithIndex, "Value1", each if Number.Mod([Index], 2) = 0 then Table.Column(Source, Table.ColumnNames(Source){0}){[Index]} else null),
+    AddColumns2 = Table.AddColumn(AddColumns, "Value2", each if Number.Mod([Index], 2) = 1 then Table.Column(Source, Table.ColumnNames(Source){0}){[Index]} else null),
+    
+    // Заполняем значения второго столбца из следующей строки
+    FilledValues = Table.FillUp(AddColumns2,{"Value2"}),
+    
+    // Оставляем только четные строки (где Index mod 2 = 0)
+    FilteredRows = Table.SelectRows(FilledValues, each Number.Mod([Index], 2) = 0),
+    
+    // Удаляем исходный столбец и индекс
+    RemoveOriginal = Table.RemoveColumns(FilteredRows, {Table.ColumnNames(Source){0}, "Index"}),
+    
+    // Переименовываем столбцы (опционально)
+    RenamedColumns = Table.RenameColumns(RemoveOriginal, {{"Value1", "OriginalValue"}, {"Value2", "NextValue"}}),
+    #"Переупорядоченные столбцы" = Table.ReorderColumns(RenamedColumns,{"NextValue", "OriginalValue", "dimensions.name", "metrics.1", "metrics.2", "metrics.3", "metrics.4", "metrics.5", "metrics.6", "metrics.7", "metrics.8", "metrics.9", "metrics.10", "metrics.11", "metrics.12", "metrics.13", "metrics.14"}),
+    #"Переименованные столбцы" = Table.RenameColumns(#"Переупорядоченные столбцы",{{"NextValue", "Date"}, {"OriginalValue", "SKU"}, {"dimensions.name", "Name"}, {"metrics.1", "ordered_units"}, {"metrics.2", "revenue"}, {"metrics.3", "hits_view_search"}, {"metrics.4", "hits_view_pdp"}, {"metrics.5", "hits_view"}, {"metrics.6", "hits_tocart"}, {"metrics.7", "session_view"}, {"metrics.8", "conv_tocart"}, {"metrics.9", "returns"}, {"metrics.10", "cancellations"}, {"metrics.11", "delivered_units"}, {"metrics.12", "position_category"}, {"metrics.13", "hits_tocart_search"}, {"metrics.14", "hits_tocart_pdp"}}),
+    #"Измененный тип1" = Table.TransformColumnTypes(#"Переименованные столбцы",{{"SKU", Int64.Type}}),
+    #"Строки с примененным фильтром" = Table.SelectRows(#"Измененный тип1", each [ordered_units] > 0)
+in
+    #"Строки с примененным фильтром"

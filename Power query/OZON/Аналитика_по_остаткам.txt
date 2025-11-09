@@ -1,0 +1,47 @@
+let
+    // 1. Получаем список SKU из таблицы
+    skuTable = Характеристики_товаров,
+    #"Строки с примененным фильтром" = Table.SelectRows(skuTable, each ([flag_actual_sku] = "actual")),  // Ваш запрос с таблицей товаров
+    skuList = Table.Column(#"Строки с примененным фильтром", "sku"),  // Извлекаем столбец "sku" (обратите внимание на регистр)
+    
+    // 2. Фильтруем пустые значения и преобразуем в строки
+    filteredSkus = List.Select(skuList, each _ <> null and _ <> ""),
+    skuStrings = List.Transform(filteredSkus, each Text.From(_)),  // Число → строка
+    
+    // 3. Формируем тело запроса с массивом строк
+    url = "https://api-seller.ozon.ru/v1/analytics/stocks",
+    
+    headers = [
+        #"Client-Id" = "ВАШ_ID",
+        #"Api-Key" = "ВАШ_API_KEY",
+        #"Content-Type" = "application/json"
+    ],
+    body = Text.Format(
+        "{""skus"": [#{0}]}",
+        {
+            Text.Combine(
+                List.Transform(skuStrings, each """" & _ & """"),
+                ","
+            )
+        }
+    ),
+    
+    // 4. Отправляем запрос
+    source = Json.Document(
+        Web.Contents(
+            url,
+            [
+                Headers = headers,
+                Content = Text.ToBinary(body)
+            ]
+        )
+    ),
+    items = source[items],
+    table = Table.FromList(items, Splitter.SplitByNothing(), null, null, ExtraValues.Error),
+    #"Развернутый элемент Column1" = Table.ExpandRecordColumn(table, "Column1", {"sku", "name", "offer_id", "warehouse_id", "warehouse_name", "cluster_id", "cluster_name", "item_tags", "ads", "days_without_sales", "turnover_grade", "idc", "available_stock_count", "valid_stock_count", "waiting_docs_stock_count", "expiring_stock_count", "transit_defect_stock_count", "stock_defect_stock_count", "excess_stock_count", "other_stock_count", "requested_stock_count", "transit_stock_count", "return_from_customer_stock_count", "return_to_seller_stock_count"}, {"sku", "name", "offer_id", "warehouse_id", "warehouse_name", "cluster_id", "cluster_name", "item_tags", "ads", "days_without_sales", "turnover_grade", "idc", "available_stock_count", "valid_stock_count", "waiting_docs_stock_count", "expiring_stock_count", "transit_defect_stock_count", "stock_defect_stock_count", "excess_stock_count", "other_stock_count", "requested_stock_count", "transit_stock_count", "return_from_customer_stock_count", "return_to_seller_stock_count"}),
+    #"Извлеченные значения" = Table.TransformColumns(#"Развернутый элемент Column1", {"item_tags", each Text.Combine(List.Transform(_, Text.From), ";"), type text})
+in
+    #"Извлеченные значения"
+    // #"Развернутый элемент Column1" = Table.ExpandRecordColumn(Источник, "Column1", {"sku", "name", "offer_id", "warehouse_id", "warehouse_name", "cluster_id", "cluster_name", "item_tags", "ads", "days_without_sales", "turnover_grade", "idc", "available_stock_count", "valid_stock_count", "waiting_docs_stock_count", "expiring_stock_count", "transit_defect_stock_count", "stock_defect_stock_count", "excess_stock_count", "other_stock_count", "requested_stock_count", "transit_stock_count", "return_from_customer_stock_count", "return_to_seller_stock_count"}, {"Column1.sku", "Column1.name", "Column1.offer_id", "Column1.warehouse_id", "Column1.warehouse_name", "Column1.cluster_id", "Column1.cluster_name", "Column1.item_tags", "Column1.ads", "Column1.days_without_sales", "Column1.turnover_grade", "Column1.idc", "Column1.available_stock_count", "Column1.valid_stock_count", "Column1.waiting_docs_stock_count", "Column1.expiring_stock_count", "Column1.transit_defect_stock_count", "Column1.stock_defect_stock_count", "Column1.excess_stock_count", "Column1.other_stock_count", "Column1.requested_stock_count", "Column1.transit_stock_count", "Column1.return_from_customer_stock_count", "Column1.return_to_seller_stock_count"})
+// in
+    // #"Развернутый элемент Column1"

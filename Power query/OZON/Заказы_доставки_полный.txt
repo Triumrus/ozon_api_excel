@@ -1,0 +1,7 @@
+let
+    Источник = Table.NestedJoin(Заказы_доставки, {"SKU"}, Список_товаров_API, {"sku"}, "Список_товаров_API", JoinKind.LeftOuter),
+    #"Развернутый элемент Список_товаров_API" = Table.ExpandTableColumn(Источник, "Список_товаров_API", {"Артикул", "ID", "barcode"}, {"Список_товаров_API.Артикул", "Список_товаров_API.ID", "Список_товаров_API.barcode"}),
+    #"Переупорядоченные столбцы" = Table.ReorderColumns(#"Развернутый элемент Список_товаров_API",{"Date", "Список_товаров_API.Артикул", "SKU", "Список_товаров_API.ID", "Список_товаров_API.barcode", "Name", "ordered_units", "revenue", "hits_view_search", "hits_view_pdp", "hits_view", "hits_tocart", "session_view", "conv_tocart", "returns", "cancellations", "delivered_units", "position_category", "hits_tocart_search", "hits_tocart_pdp"}),
+    #"Переименованные столбцы" = Table.RenameColumns(#"Переупорядоченные столбцы",{{"Список_товаров_API.Артикул", "Article"}, {"Список_товаров_API.ID", "ID"}, {"Список_товаров_API.barcode", "barcode"}})
+in
+    #"Переименованные столбцы"
